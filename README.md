@@ -33,8 +33,14 @@ Run the setup script once to install the required packages and create the projec
 ```PowerShell
 Rscript .\renv_setup.R
 ```
+The setup script will:
+- check whether an renv.lock file already exists
+- restore the project environment from the lockfile if it is present
+- otherwise initialize a new project-local renv environment
+- install the required CRAN and Bioconductor packages
+- create or update renv.lock
 **Option 2: Restore the environment from the lockfile**
-If the repository already contains an renv.lock file, you can restore the recorded package versions instead.
+If the repository already contains an renv.lock file, you can also directly restore the recorded package versions by:
 ```PowerShell
 Rscript -e "renv::restore()"
 ```
