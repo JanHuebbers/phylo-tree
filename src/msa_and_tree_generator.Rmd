@@ -1,0 +1,639 @@
+---
+title: 'msa_and_tree_generator'
+author: 'Jan Huebbers'
+date: 'April 2025'
+output: html_document
+---
+
+
+```{r setup, include = FALSE, warning = FALSE}
+knitr::opts_chunk$set(echo = TRUE, include = FALSE, warning = FALSE, message = FALSE)
+source('package_loader.R')
+# Load ggplot theme
+source('Jans_ggplot_theme.R')
+```
+
+```{r Directories, warnign = FALSE, include = FALSE}
+# Sequence depot
+file_path_01 <- "../data/protein_list.xlsx"
+Sheet <- "Sheet1"
+
+# Define name for output directory
+tree_dir <- "tree_01"
+
+# Plot out
+Directory <- file.path("..", "output", tree_dir)
+
+# MSA out
+fasta_path <- file.path(Directory, "MSA")
+
+# Create output folders if they do not exist
+dir.create(Directory, recursive = TRUE, showWarnings = FALSE)
+dir.create(fasta_path, recursive = TRUE, showWarnings = FALSE)
+```
+
+```{r Import_sequences, warning = FALSE, include = FALSE}
+# Import protein sequences
+data <- read_excel(file_path_01, sheet = Sheet)
+```
+
+```{r Family_group, warning = FALSE}
+# Categorize proteins by family
+data <- data %>%
+  mutate(sequence = gsub("[^A-Za-z]", "", sequence)) %>% # Remove invalid characters such as '~' from the sequences
+  mutate(family = case_when(
+    grepl("EXO70|EXOC7|Exoc7", name, ignore.case = TRUE) ~ "EXO70",
+    grepl("EXO84", name, ignore.case = TRUE) ~ "EXO84",
+    grepl("MLO", name, ignore.case = TRUE) ~ "MLO",
+    grepl("CDK", name, ignore.case = TRUE) ~ "CDK",
+    TRUE ~ "Other"
+  )) %>% # Add protein family column
+  relocate(family, .before = name)
+
+
+# CDK df
+CDK_seq <- data %>%
+  filter(grepl("CDK", family))
+# EXO70 df
+EXO70_seq <- data %>%
+  filter(grepl("EXO70", family))
+# EXO84 df
+EXO84_seq <- data %>%
+  filter(grepl("EXO84", family))
+# MLO df
+MLO_seq <- data %>%
+  filter(grepl("MLO", family))
+
+write.csv(CDK_seq, "../data/CDK_seq.csv", row.names = FALSE)
+write.csv(EXO70_seq, "../data/EXO70_seq.csv", row.names = FALSE)
+write.csv(EXO84_seq, "../data/EXO84_seq.csv", row.names = FALSE)
+write.csv(MLO_seq, "../data/MLO_seq.csv", row.names = FALSE)
+
+data_msa <- data %>% 
+  group_by(family) %>% # Grouping defines hierarchy level of MSA
+  nest()
+```
+
+```{r Clustal_align, warning = FALSE, include = FALSE}
+# Toggle overwriting of existing files
+overwrite <- FALSE
+
+# Ensure output directory exists
+if (!dir.exists(fasta_path)) dir.create(fasta_path, recursive = TRUE, showWarnings = FALSE)
+
+# Alignment methods to run
+methods <- c("ClustalW", "ClustalOmega", "Muscle")
+
+# Helper: map method name to msa() 'method' argument (same strings here)
+method_fun <- function(m) switch(m,
+  "ClustalW"     = "ClustalW",
+  "ClustalOmega" = "ClustalOmega",
+  "Muscle"       = "Muscle",
+  stop("Invalid method: ", m)
+)
+
+for (i in seq_len(nrow(data_msa))) {
+  fam <- data_msa$family[[i]]
+  df  <- data_msa$data[[i]]
+
+  # Keep only non-empty sequences; uppercase amino acids
+  df <- df %>%
+    dplyr::mutate(sequence = toupper(gsub("[^ACDEFGHIKLMNPQRSTVWYBXZJUO]", "", sequence))) %>%
+    dplyr::filter(nchar(sequence) > 0)
+
+  if (nrow(df) < 2L) {
+    message(sprintf("Skipping '%s': need ≥2 sequences, got %d.", fam, nrow(df)))
+    next
+  }
+
+  # Safe names
+  safe_names <- make.unique(gsub("[^A-Za-z0-9._-]+", "_", df$name), sep = "_")
+  Seq <- Biostrings::AAStringSet(df$sequence)
+  names(Seq) <- safe_names
+
+  fam_tag <- gsub("[^A-Za-z0-9._-]+", "_", fam)
+
+  for (m in methods) {
+    tag <- paste0(fam_tag, "_", m)
+
+    # Paths
+    fasta_in  <- file.path(fasta_path, paste0("Seq_", tag, ".fa"))
+    rds_out   <- file.path(fasta_path, paste0("Align_data_", tag, ".rds"))
+    fasta_out <- file.path(fasta_path, paste0("Seq_align_", tag, ".fa"))
+
+    have_in   <- file.exists(fasta_in)
+    have_rds  <- file.exists(rds_out)
+    have_out  <- file.exists(fasta_out)
+
+    # If everything exists and overwrite=FALSE, skip entirely
+    if (!overwrite && have_in && have_rds && have_out) {
+      message(sprintf("Skip %s × %s: all outputs present.", fam, m))
+      next
+    }
+
+    # Always ensure the unaligned FASTA is written (unless skipping overwrite)
+    if (overwrite || !have_in) {
+      Biostrings::writeXStringSet(Seq, file = fasta_in)
+    }
+
+    # If both aligned outputs already exist and overwrite=FALSE, skip alignment
+    if (!overwrite && have_rds && have_out) {
+      message(sprintf("Skip alignment for %s × %s: aligned files present.", fam, m))
+      next
+    }
+
+    # Run alignment
+    Align <- tryCatch(
+      msa::msa(Seq, method = method_fun(m)),
+      error = function(e) {
+        message(sprintf("Alignment failed for %s via %s: %s", fam, m, e$message))
+        NULL
+      }
+    )
+    if (is.null(Align)) next
+
+    # Save aligned artifacts (respect overwrite)
+    if (overwrite || !have_rds)  saveRDS(Align, file = rds_out)
+
+    Seq_align <- as(Align, "AAStringSet")
+    if (overwrite || !have_out) Biostrings::writeXStringSet(Seq_align, file = fasta_out)
+
+    # Optional console output
+    print(Align, show = "complete")
+    message(sprintf("Done: %s (%d seqs) via %s", fam, length(Seq), m))
+  }
+}
+```
+
+```{r Import_alignment_for_tree, message = FALSE, warning = FALSE}
+# ---- Load one alignment for tree building ----
+# Choose which family & method to analyze:
+family_tag <- "MLO"            # <-- set this
+method     <- "ClustalOmega"     # "ClustalW" | "ClustalOmega" | "Muscle"
+
+# Build path consistent with earlier MSA naming
+align_rds <- file.path(fasta_path, sprintf("Align_data_%s_%s.rds", family_tag, method))
+
+if (!file.exists(align_rds)) {
+  stop(sprintf(
+    "Alignment RDS not found: %s\nCheck 'family_tag'/'method' or run the MSA chunk first.",
+    align_rds
+  ))
+}
+
+Align <- readRDS(align_rds)
+
+# User parameters
+aa_model <- "JTT"   # e.g., "WAG","JTT","LG","Dayhoff","cpREV","mtmam","VT","rtREV","BLOSUM62", etc.
+bts      <- 100      # bootstrap replicates
+```
+
+```{r pml_fit_presets_helper, include = FALSE, warning = FALSE}
+#' Optimize a pml fit with preset modes
+#'
+#' @param fit      A phangorn::pml object (e.g., pml(nj_tree, data = phang_align))
+#' @param aa_model Protein model string, e.g. "JTT","LG","WAG", etc.
+#' @param mode     One of "just-get-it", "light", "heavy"
+#' @param trace    0=quiet, 1..3 for verbose optimizer output
+#' @param k_light  Discrete gamma categories for 'light' (default 4)
+#' @param k_heavy  Discrete gamma categories for 'heavy' (default 4)
+#' @param rearr_heavy Rearrangement mode for 'heavy' (default "stochastic")
+#' @return Updated pml fit (with optimized tree in $tree)
+# helper ---------------------------------------------------------------
+optimize_fit_by_mode <- function(
+  fit,
+  aa_model    = "JTT",
+  mode        = c("just-get-it", "light", "heavy"),
+  trace       = 1,
+  maxit       = 100,   # cap iterations
+  k_light     = 4,
+  k_heavy     = 4,
+  rearr_heavy = "stochastic"
+) {
+  mode <- match.arg(mode)
+  ctrl <- phangorn::pml.control(trace = trace, maxit = maxit)
+
+  if (mode == "just-get-it") {
+    # FAST: no topology search, just branch lengths
+    fit <- phangorn::optim.pml(
+      fit,
+      model         = aa_model,
+      optInv        = FALSE,
+      optGamma      = FALSE,
+      optBf         = FALSE,
+      optEdge       = TRUE,          # branch lengths only
+      rearrangement = "none",        # <- no NNI at all
+      control       = ctrl
+    )
+    return(fit)
+  }
+
+  if (mode == "light") {
+    fit <- phangorn::optim.pml(
+      fit,
+      model         = aa_model,
+      optInv        = TRUE,
+      optGamma      = TRUE,
+      k             = k_light,
+      optBf         = FALSE,
+      optEdge       = TRUE,
+      rearrangement = "NNI",
+      control       = ctrl
+    )
+    return(fit)
+  }
+
+  # heavy
+  fit <- phangorn::optim.pml(
+    fit,
+    model         = aa_model,
+    optInv        = TRUE,
+    optGamma      = TRUE,
+    k             = k_heavy,
+    optBf         = FALSE,
+    optEdge       = TRUE,
+    rearrangement = rearr_heavy,   # "stochastic"
+    control       = ctrl
+  )
+  fit
+}
+```
+
+```{r Build_phylo_tree, message = TRUE, warning = FALSE}
+# ---- Build ML tree with bootstrap from an 'msa' alignment ----
+# Ensure output directory exists
+if (!dir.exists(Directory)) dir.create(Directory, recursive = TRUE, showWarnings = FALSE)
+
+# Convert alignment -> character matrix -> phyDat
+# Primary route
+aligned_char <- tryCatch({
+  as.matrix(Align@unmasked)  # msa::MsaAAMultipleAlignment -> DNAStringSet/AAStringSet
+}, error = function(e) {
+  # Fallback route via AAStringSet
+  aa <- as(Align, "AAStringSet")
+  as.matrix(aa)
+})
+
+if (length(aligned_char) == 0) stop("The alignment appears to be empty or not read correctly.")
+
+# phangorn data with site-pattern compression for speed
+phang_align <- phangorn::phyDat(aligned_char, type = "AA")
+
+# quick stats
+n_seq  <- length(phang_align)           # number of sequences
+n_sites <- attr(phang_align, "nr")       # number of site patterns
+message(sprintf("Data: %d sequences, %d site patterns.", n_seq, n_sites))
+
+# Distance -> NJ starting tree
+dist_matrix <- phangorn::dist.ml(phang_align, model = aa_model)
+nj_tree     <- phangorn::NJ(dist_matrix)
+nj_tree     <- ape::unroot(nj_tree)
+
+# ML fit and optimization
+fit0 <- phangorn::pml(nj_tree, data = phang_align)
+## pick one:
+fit_just  <- optimize_fit_by_mode(fit0, aa_model = aa_model, mode = "just-get-it")
+#fit_light <- optimize_fit_by_mode(fit0, aa_model = aa_model, mode = "light")
+#fit_heavy <- optimize_fit_by_mode(fit0, aa_model = aa_model, mode = "heavy")
+
+# Bootstrap support
+set.seed(1710)
+bs <- phangorn::bootstrap.pml(
+  fit_just,
+  bs        = bts,
+  optNni    = FALSE,# optNni = TRUE → For each bootstrap replicate, phangorn resamples columns, then searches topology with NNI (plus branch-length optimization) to maximize likelihood on that resampled alignment.
+  multicore = FALSE,
+  control   = phangorn::pml.control(trace = 0))
+
+# Extract ML tree
+ml_tree <- fit_just$tree
+
+# Save artifacts (RDS + Newick) with informative names
+base_tag <- sprintf("%s_%s_%s_%s", family_tag, method, aa_model, bts)
+saveRDS(ml_tree, file = file.path(Directory, sprintf("ML_Tree_%s.rds", base_tag)))
+saveRDS(bs,      file = file.path(Directory, sprintf("BS_%s.rds", base_tag)))
+ape::write.tree(ml_tree, file = file.path(Directory, sprintf("ML_Tree_%s.newick", base_tag)))
+message(sprintf("Saved ML tree and bootstrap: %s", base_tag))
+```
+
+```{r TreeValidation, fig.height=40/2.54, fig.width=40/2.54, warning=FALSE, message=FALSE, include=TRUE}
+# ---- Load ML tree and bootstrap replicates ----
+tree_path <- file.path(Directory, sprintf("ML_Tree_%s.rds", base_tag))
+bs_path   <- file.path(Directory, sprintf("BS_%s.rds", base_tag))
+
+if (!file.exists(tree_path)) stop("Missing ML tree: ", tree_path)
+if (!file.exists(bs_path))   stop("Missing bootstrap file: ", bs_path)
+
+ml_tree <- readRDS(tree_path)   # class 'phylo'
+bs      <- readRDS(bs_path)     # list of bootstrap trees
+
+# ---- (Optional) midpoint root & ladderize for nicer layout ----
+# Comment these two lines if you prefer the original topology orientation
+ml_tree <- ape::ladderize(ml_tree, right = TRUE)
+
+# ---- Quick base plotting with supports (>= 50) ----
+op <- par(no.readonly = TRUE); on.exit(par(op))
+par(mar = c(1, 1, 1, 1))
+phangorn::plotBS(ml_tree, bs, p = 50, type = "phylogram", cex = 0.5)  # shrink tip labels a bit
+
+# ---- Build a support-annotated tree object WITHOUT plotting ----
+# type = "none" returns the tree with node.label = bootstrap values
+tree_with_bs <- phangorn::plotBS(ml_tree, bs, p = 0, type = "none")  # keep all supports on object
+# Unroot for downstream functions that expect unrooted
+ml_tree_input <- ape::unroot(tree_with_bs)
+
+# ---- Your custom ggplot-based rendering (guard if file missing) ----
+tmpl <- "tree_templates/Phylogram_witho_meta.R"
+if (!file.exists(tmpl)) stop("Missing template script: ", tmpl)
+source(tmpl)
+
+# Example: You can pass support threshold to your function if supported; otherwise it will use node.label
+plot_phylo_test <- Phylo_test(tree = ml_tree_input, LayO = "daylight")
+print(plot_phylo_test)
+
+# ---- Save SVG (40×40 cm is big; adjust if needed) ----
+out_svg <- file.path(Directory, sprintf("Phylo_test_daylight_%s.svg", base_tag))
+ggplot2::ggsave(
+  filename  = out_svg,
+  plot      = plot_phylo_test,
+  width     = 40, height = 40, units = "cm",
+  limitsize = FALSE
+)
+
+# ---- Save the annotated tree for later reuse ----
+saveRDS(ml_tree_input, file = file.path(Directory, sprintf("Tree_%s.rds", base_tag)))
+message("Saved: ", out_svg)
+```
+
+```{r TreeDataSetup, warning = FALSE, include = FALSE}
+# Load optimized ML tree with bootstrap values
+tree_path <- file.path(Directory, sprintf("Tree_%s.rds", base_tag))
+ml_tree_input <-  readRDS(tree_path)
+
+# Convert tree with bootstrap values into a tibble and prepare for MRCA extraction and color mapping
+ml_tibble_w_metadata <- ml_tree_input %>%
+                        as.tibble() %>%
+                        mutate(
+                          bootstrap = ifelse(!is.na(as.numeric(label)), as.numeric(label), NA_real_),  # Extract bootstrap values
+                          label = ifelse(is.na(as.numeric(label)), label, NA_character_)                    # Keep only non-numeric labels
+                        ) %>%
+                        left_join(data, by = c("label" = "name")) %>%  # Merge tree data with external data
+                        select(c(parent, node, branch.length, label, bootstrap, clade, species, chain_1)) # Keep relevant columns
+```
+
+```{r getMRCA_chunk, warning = FALSE, include = FALSE}
+# Access MRCA_get function
+source("MRCA_get.r")
+
+# Compute MRCA nodes and descendant nodes for each clade
+ml_tibble_MRCA <- ml_tibble_w_metadata %>%
+                  group_by(clade) %>%         # Group by 'clade'
+                  nest() %>%                  # Nest the data for each clade
+                  mutate(
+                    # Calculate MRCA for each clade group
+                    mrca_node = purrr::map_int(data, get_clade_mrca, tree = ml_tree_input)  # <- int column
+                  ) %>%
+                  unnest(data) %>%            # Unnest the nested clade data
+                  relocate(clade, .before = mrca_node) # Move 'clade' column before 'mrca_node'
+```
+
+```{r Color_tree, warning = FALSE, error = FALSE}
+# --- Build node labels for coloring (one per row) ---
+node_count <- max(ml_tibble_MRCA$node, na.rm = TRUE)
+
+ml_tibble_color <- ml_tibble_MRCA %>%
+                    arrange(node) %>%
+                    mutate(Node_color = paste0("Node_", node))  # one-to-one with each row
+
+# --- What things can be colored? nodes + clades + species ---
+clades_present   <- sort(unique(na.omit(ml_tibble_color$clade)))
+species_present  <- sort(unique(na.omit(ml_tibble_color$species)))
+node_keys        <- paste0("Node_", seq_len(node_count))
+
+color_ids <- c(node_keys, clades_present, species_present)
+
+# --- Base color map (default grey) ---
+base_color <- "#9C9E9F"
+Colors <- setNames(rep(base_color, length(color_ids)), color_ids)
+
+# --- Clade gradient (auto-sized to detected clades) ---
+clade_colors_start <- "#0098A1"
+clade_colors_end   <- "#F6A800"
+if (length(clades_present) > 0) {
+  clade_gradient <- colorRampPalette(c(clade_colors_start, clade_colors_end))
+  clade_colors   <- setNames(clade_gradient(length(clades_present)), clades_present)
+  Colors[names(clade_colors)] <- clade_colors
+}
+
+
+# --- Color MRCA nodes in black ---
+mrca_nodes_color <- ml_tibble_color %>%
+  filter(!is.na(mrca_node)) %>%
+  distinct(mrca_node) %>%
+  pull(mrca_node)
+
+if (length(mrca_nodes_color) > 0) {
+  mrca_overrides <- setNames(rep("#000000", length(mrca_nodes_color)),
+                             paste0("Node_", mrca_nodes_color))
+  # only apply for keys that exist
+  mrca_overrides <- mrca_overrides[names(mrca_overrides) %in% names(Colors)]
+  Colors[names(mrca_overrides)] <- mrca_overrides
+}
+
+# --- Optional: manual species overrides (example) ---
+manual_overrides <- c(
+  "Arabidopsis thaliana"       = "#2C2D2D",
+  "Chara braunii"              = "#858788",
+  "Marchantia polymorpha"      = "#595A5A",
+  "Mesotaenium endlicherianum" = "#6F7071",
+  "Hordeum vulgare"            = "#000000"
+)
+manual_overrides <- manual_overrides[names(manual_overrides) %in% names(Colors)]
+Colors[names(manual_overrides)] <- manual_overrides
+
+# Inspect
+print(Colors)
+
+
+### How to use `Colors` when plotting
+# If your plotting code maps **a column that contains `Node_*`, clade, or species names** to color, add:
+# + scale_color_manual(values = Colors, na.value = base_color)
+```
+
+```{r TreeDataFinal, warning=FALSE, include=FALSE}
+# --- Final meta tibble for plotting -----------------------------------------
+
+# Ensure MRCA node is integer and add a stable key matching your Colors map
+ml_tree_meta <- ml_tibble_color %>%
+  dplyr::mutate(
+    mrca_node = as.integer(mrca_node),
+    node_key  = paste0("Node_", node)      # one-to-one with node id
+  )
+
+# Collect unique MRCA nodes, omitting NA
+mrca_collect <- stats::na.omit(unique(ml_tibble_MRCA$mrca_node))
+print(mrca_collect)
+
+# Unroot only if needed (MRCA is topology-based; unrooting won't change it)
+if (ape::is.rooted(ml_tree_input)) {
+  ml_tree_input <- ape::unroot(ml_tree_input)
+}
+
+# Table of MRCA nodes per clade (for clade ribbons/labels etc.)
+mrca_nodes <- ml_tree_meta %>%
+  dplyr::filter(!is.na(mrca_node), !is.na(clade)) %>%
+  dplyr::distinct(mrca_node, clade) %>%
+  dplyr::rename(node = mrca_node, label = clade) %>%
+  dplyr::mutate(node_key = paste0("Node_", node))
+
+# (Optional) attach color from your Colors vector if you want it baked in:
+if (exists("Colors")) {
+  # Colors is a named vector with names like "Node_<id>", clade names, species names
+  col_lookup <- tibble::tibble(key = names(Colors), color = unname(Colors))
+
+  # node colors (using node_key) and clade colors (using label)
+  mrca_nodes <- mrca_nodes %>%
+    dplyr::left_join(col_lookup, by = c("node_key" = "key")) %>%  # node-based color
+    dplyr::rename(node_color = color) %>%
+    dplyr::left_join(col_lookup, by = c("label" = "key")) %>%     # clade-based color
+    dplyr::rename(clade_color = color)
+}
+
+# (Optional) tip-level meta (handy for tip coloring/labels)
+tip_meta <- ml_tree_meta %>%
+  dplyr::filter(!is.na(label)) %>%
+  dplyr::select(node, node_key, label, species, clade, chain_1, bootstrap)
+
+# Objects you can pass to your visualizer:
+# - ml_tree_input: phylo (unrooted if it was rooted)
+# - ml_tree_meta: per-node tibble (has node_key)
+# - mrca_nodes: clade MRCA table (node, label, node_key, optional colors)
+# - Colors: named vector for scale_color_manual(values = Colors)
+# - labels_to_show: named vector for protein names to be shown as tip labels
+labels_to_show <- c("AtMLO1", "AtMLO2", "AtMLO3", "AtMLO4", "AtMLO5", "AtMLO6", "AtMLO7", "AtMLO8", "AtMLO9", "AtMLO10", "AtMLO11", "AtMLO12", "AtMLO13", "AtMLO14", "AtMLO15", "CbMLO1", "CbMLO2", "CbMLO3", "CbMLO4", "CbMLO5", "CbMLO6", "MeMLO1", "MpMLO1", "MpMLO2", "MpMLO3", "MpMLO4", "HvMlo1")
+```
+
+```{r Plot_daylight, echo=FALSE, warning=FALSE, include=TRUE, fig.height=30/2.54, fig.width=40/2.54}
+# --- Load function for tree visualization
+tmpl <- file.path("tree_templates", "Phylogram_daylight_default.R")
+if (!file.exists(tmpl)) stop("Template not found: ", tmpl)
+source(tmpl)
+
+# --- Build plot (padding + no clipping so labels can extend)
+plot_phylo_day <- phylo_daylight(
+  tree = ml_tree_input,
+  metadata = ml_tree_meta,
+  clade_nodes = mrca_nodes,
+  color_mapping = Colors
+) +
+  scale_x_continuous(expand = expansion(mult = 0.10)) + # Add 20% padding on both sides
+  scale_y_continuous(expand = expansion(mult = 0.10)) # Add 20% padding on both sides
+  # coord_cartesian(clip = "off") +
+  # theme(plot.margin = margin(10, 10, 10, 10))
+ 
+# --- Display
+plot_phylo_day
+
+# --- Save
+ggplot2::ggsave(
+  filename = file.path(Directory, paste0("Phylo_daylight_", method, "_", aa_model, "_", bts, ".svg")),
+  plot = plot_phylo_day,
+  width = 40, height = 30, units = "cm",
+  limitsize = FALSE
+)
+```
+
+```{r Clado_circ function, warning=FALSE, include=FALSE}
+Clado_circ <- function(tree, metadata, color_mapping, clade_nodes,
+                       show_legend = FALSE, use_equal_edges = TRUE) {
+
+  # Base tree
+  p <- ggtree(
+    tree,
+    layout = "circular",
+    color  = "#646567",
+    size   = 0.5,
+    branch.length = if (use_equal_edges) "none" else "branch.length"
+  )
+
+  # Attach node/tip metadata BEFORE adding layers that use it
+  p <- p %<+% metadata
+
+  # Tip points (squares), filled by Node_color; angle is computed by ggtree for circular layouts
+  p <- p +
+    ggtree::geom_tippoint(
+      data = function(x) dplyr::filter(x, label %in% labels_to_show),
+      ggplot2::aes(fill = species), angle = 0, color = "#000000", shape = 21, size = 2, alpha = 0.9
+      ) +
+
+    # Tip labels as small boxed labels, filled by clade (optional; remove 'fill = clade' if not desired)
+    geom_tiplab(
+      aes(fill = clade, angle = angle),
+      align = FALSE,
+      color = "#000000",
+      hjust = -0.2,
+      size = 1.2,
+      offset = 0.0,
+      geom = "label",
+      label.padding = grid::unit(0.25, "lines"),
+      label.r       = grid::unit(0.0,   "lines"),
+      label.size    = 0.2
+    )
+
+    # Internal nodes (circles), filled by Node_color
+    # geom_nodepoint(aes(fill = Node_color), shape = 21, size = 1)
+
+  # Scales: same palette for color and fill so clade labels & MRCA bars match, and Node_* keys resolve
+  p <- p +
+    scale_color_manual(values = color_mapping) +
+    scale_fill_manual(values = color_mapping)
+
+  # Optional: hide legends
+  if (!show_legend) {
+    p <- p + guides(color = "none", fill = "none", size = "none", shape = "none")
+  }
+
+  # Clade labels from MRCA nodes, colored by the clade label
+  if (!is.null(clade_nodes) && nrow(clade_nodes) > 0) {
+    p <- p +
+      geom_cladelab(
+        data = clade_nodes,
+        mapping = aes(node = node, label = label, color = label),
+        align        = TRUE,
+        hjust        = "center",
+        offset       = 3.7,
+        offset.text  = 0.3,
+        barsize      = 0.8,
+        fontsize     = 4,
+        fontface     = "bold",
+        angle        = "auto",
+        horizontal   = FALSE,
+        parse        = FALSE,
+        textcolor    = "#000000"
+      )
+  }
+  # p <- ggtree::rotate(p, 395) # does not rotate labels or coloring
+  p
+}
+```
+
+```{r Plot_circ, echo=FALSE, fig.height = 40.0/2.54, fig.width = 40.0/2.54, warning=FALSE, include=TRUE}
+# Create Tree
+plot_clado_circ <- Clado_circ(
+  tree          = ml_tree_input,
+  metadata      = ml_tree_meta,
+  color_mapping = Colors,
+  clade_nodes   = mrca_nodes,
+  show_legend   = FALSE,
+  use_equal_edges = TRUE
+)
+
+plot_clado_circ
+
+ggsave(
+  filename = file.path(Directory, paste0("Clado_circ_", method, "_", aa_model, "_", bts, ".svg")),
+  plot     = plot_clado_circ,
+  width    = 40, height = 40, units = "cm",
+  limitsize = FALSE
+)
+```
