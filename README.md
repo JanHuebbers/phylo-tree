@@ -10,17 +10,16 @@ An R-based workflow for protein sequence alignment, phylogenetic tree constructi
 - [Notes](#notes)
 - [Status](#status)
 ## Overview
-`phylo-tree` is an R-based workflow for generating multiple sequence alignments, inferring phylogenetic trees, calculating bootstrap support, and producing publication-style tree visualizations.
+`phylo-tree` is an R-based workflow for generating multiple sequence alignments, inferring phylogenetic trees, calculating bootstrap support, and producing tree visualizations by [ggtree](https://guangchuangyu.github.io/software/ggtree/).
 The pipeline is centered around the R Markdown workflow in `src/msa_and_tree_generator.Rmd` and uses a project-local `renv` environment for dependency management.
 ## Features
 - Import protein sequences from Excel
 - Classify sequences into protein families
-- Generate family-specific filtered sequence tables
-- Run multiple sequence alignments with ClustalW, Clustal Omega, or MUSCLE
+- Generate family-specific multiple sequence alignments with ClustalW, Clustal Omega, or MUSCLE
 - Build maximum-likelihood phylogenetic trees
 - Calculate bootstrap support values
 - Save tree objects and Newick exports
-- Create `ggtree`-based daylight and circular tree visualizations
+- Create `ggtree`-based tree visualizations
 - Manage dependencies with a project-local `renv` environment
 ## Repository layout
 ```text
@@ -36,7 +35,7 @@ phylo-tree/
 ## Requirements
 - R
 - RStudio is recommended for interactive use
-- PowerShell or a terminal is optional for command-line setup and execution
+- PowerShell or a terminal for command-line setup and execution (optional)
 ## Installation
 Clone the repository and change into the project directory.
 ```powershell
