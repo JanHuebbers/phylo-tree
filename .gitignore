@@ -49,6 +49,6 @@ po/*~
 rsconnect/
 
 # Project outputs
-output/tree_01/
+output/
 renv/
 data/filtered/
