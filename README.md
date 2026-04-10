@@ -27,12 +27,7 @@ The pipeline is centered around the R Markdown workflow in `src/msa_and_tree_gen
 phylo-tree/
 ├── data/                         # input data and filtered intermediate tables
 ├── output/                       # generated alignments, trees, and plots
-├── src/                          # main workflow and helper scripts
-│   ├── msa_and_tree_generator.Rmd
-│   ├── package_loader.R
-│   ├── Jans_ggplot_theme.R
-│   └── MRCA_get.R
-├── tree_templates/               # plotting helper scripts
+├── src/                          # main workflow, helper scripts, and templates for tree visualization
 ├── renv/                         # project-local renv files
 ├── renv.lock                     # dependency lockfile
 ├── renv_setup.R                  # environment setup script
@@ -42,7 +37,6 @@ phylo-tree/
 - R
 - RStudio is recommended for interactive use
 - PowerShell or a terminal is optional for command-line setup and execution
-- Internet access is required when packages need to be installed
 ## Installation
 Clone the repository and change into the project directory.
 ```powershell
