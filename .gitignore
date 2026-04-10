@@ -51,3 +51,4 @@ rsconnect/
 # Project outputs
 output/
 renv/
+data/filtered/

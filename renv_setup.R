@@ -1,6 +1,5 @@
 options(repos = c(CRAN = "https://cloud.r-project.org"))
 
-# Install bootstrap helpers into the user library if needed
 if (!requireNamespace("renv", quietly = TRUE)) {
   install.packages("renv")
 }
@@ -8,7 +7,6 @@ if (!requireNamespace("BiocManager", quietly = TRUE)) {
   install.packages("BiocManager")
 }
 
-# Create or activate the project-local renv library
 if (!file.exists("renv.lock")) {
   renv::init(bare = TRUE)
 } else {
@@ -17,13 +15,17 @@ if (!file.exists("renv.lock")) {
 
 cran_pkgs <- c(
   "readxl",
+  "writexl",
   "dplyr",
   "tidyr",
   "purrr",
   "tibble",
   "ggplot2",
   "ape",
-  "phangorn"
+  "phangorn",
+  "knitr",
+  "rmarkdown",
+  "here"
 )
 
 bioc_pkgs <- c(
@@ -32,16 +34,16 @@ bioc_pkgs <- c(
   "ggtree"
 )
 
-installed <- rownames(installed.packages())
+all_installed <- rownames(installed.packages())
 
-cran_missing <- setdiff(cran_pkgs, installed)
+cran_missing <- setdiff(cran_pkgs, all_installed)
 if (length(cran_missing) > 0) {
   install.packages(cran_missing)
 }
 
-installed <- rownames(installed.packages())
+all_installed <- rownames(installed.packages())
 
-bioc_missing <- setdiff(bioc_pkgs, installed)
+bioc_missing <- setdiff(bioc_pkgs, all_installed)
 if (length(bioc_missing) > 0) {
   BiocManager::install(bioc_missing, ask = FALSE, update = FALSE)
 }

@@ -1,3 +1,4 @@
+library(ggplot2)
 #Set theme for ggplot objects
 #Theme
 theme_set(

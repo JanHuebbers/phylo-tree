@@ -7,29 +7,34 @@ output: html_document
 
 
 ```{r setup, include = FALSE, warning = FALSE}
+here::i_am("src/msa_and_tree_generator.Rmd")
 knitr::opts_chunk$set(echo = TRUE, include = FALSE, warning = FALSE, message = FALSE)
-source('package_loader.R')
-# Load ggplot theme
-source('Jans_ggplot_theme.R')
+
+source(here::here("src", "package_loader.R"))
+source(here::here("src", "Jans_ggplot_theme.R"))
 ```
 
-```{r Directories, warnign = FALSE, include = FALSE}
+```{r Directories, warning = FALSE, include = FALSE}
 # Sequence depot
-file_path_01 <- "../data/protein_list.xlsx"
+file_path_01 <- "data/protein_list.xlsx"
 Sheet <- "Sheet1"
 
 # Define name for output directory
 tree_dir <- "tree_01"
 
 # Plot out
-Directory <- file.path("..", "output", tree_dir)
+Directory <- file.path("output", tree_dir)
 
 # MSA out
-fasta_path <- file.path(Directory, "MSA")
+fasta_path <- file.path("output", "MSAs")
+
+# Filtered data
+Filtered <- file.path("data", "filtered")
 
 # Create output folders if they do not exist
 dir.create(Directory, recursive = TRUE, showWarnings = FALSE)
 dir.create(fasta_path, recursive = TRUE, showWarnings = FALSE)
+dir.create(Filtered, recursive = TRUE, showWarnings = FALSE)
 ```
 
 ```{r Import_sequences, warning = FALSE, include = FALSE}
@@ -64,10 +69,10 @@ EXO84_seq <- data %>%
 MLO_seq <- data %>%
   filter(grepl("MLO", family))
 
-write.csv(CDK_seq, "../data/CDK_seq.csv", row.names = FALSE)
-write.csv(EXO70_seq, "../data/EXO70_seq.csv", row.names = FALSE)
-write.csv(EXO84_seq, "../data/EXO84_seq.csv", row.names = FALSE)
-write.csv(MLO_seq, "../data/MLO_seq.csv", row.names = FALSE)
+write.csv(CDK_seq, file.path(Filtered, "CDK_seq.csv"), row.names = FALSE)
+write.csv(EXO70_seq, file.path(Filtered, "EXO70_seq.csv"), row.names = FALSE)
+write.csv(EXO84_seq, file.path(Filtered, "EXO84_seq.csv"), row.names = FALSE)
+write.csv(MLO_seq, file.path(Filtered, "MLO_seq.csv"), row.names = FALSE)
 
 data_msa <- data %>% 
   group_by(family) %>% # Grouping defines hierarchy level of MSA
@@ -75,6 +80,7 @@ data_msa <- data %>%
 ```
 
 ```{r Clustal_align, warning = FALSE, include = FALSE}
+# This will create alignments across all protein families included in protein_list
 # Toggle overwriting of existing files
 overwrite <- FALSE
 
@@ -343,7 +349,7 @@ tree_with_bs <- phangorn::plotBS(ml_tree, bs, p = 0, type = "none")  # keep all 
 ml_tree_input <- ape::unroot(tree_with_bs)
 
 # ---- Your custom ggplot-based rendering (guard if file missing) ----
-tmpl <- "tree_templates/Phylogram_witho_meta.R"
+tmpl <- "src/tree_templates/Phylogram_wo_meta.R"
 if (!file.exists(tmpl)) stop("Missing template script: ", tmpl)
 source(tmpl)
 
@@ -383,7 +389,7 @@ ml_tibble_w_metadata <- ml_tree_input %>%
 
 ```{r getMRCA_chunk, warning = FALSE, include = FALSE}
 # Access MRCA_get function
-source("MRCA_get.r")
+source(here::here("src", "MRCA_get.R"))
 
 # Compute MRCA nodes and descendant nodes for each clade
 ml_tibble_MRCA <- ml_tibble_w_metadata %>%
@@ -515,7 +521,7 @@ labels_to_show <- c("AtMLO1", "AtMLO2", "AtMLO3", "AtMLO4", "AtMLO5", "AtMLO6", 
 
 ```{r Plot_daylight, echo=FALSE, warning=FALSE, include=TRUE, fig.height=30/2.54, fig.width=40/2.54}
 # --- Load function for tree visualization
-tmpl <- file.path("tree_templates", "Phylogram_daylight_default.R")
+tmpl <- file.path("src", "tree_templates", "Phylogram_daylight_default.R")
 if (!file.exists(tmpl)) stop("Template not found: ", tmpl)
 source(tmpl)
 
@@ -526,8 +532,8 @@ plot_phylo_day <- phylo_daylight(
   clade_nodes = mrca_nodes,
   color_mapping = Colors
 ) +
-  scale_x_continuous(expand = expansion(mult = 0.10)) + # Add 20% padding on both sides
-  scale_y_continuous(expand = expansion(mult = 0.10)) # Add 20% padding on both sides
+  scale_x_continuous(expand = expansion(mult = 0.10)) + # Add 10% padding on both sides
+  scale_y_continuous(expand = expansion(mult = 0.10)) # Add 10% padding on both sides
   # coord_cartesian(clip = "off") +
   # theme(plot.margin = margin(10, 10, 10, 10))
  
